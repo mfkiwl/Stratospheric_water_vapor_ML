@@ -6,6 +6,77 @@ Created on Mon Oct 22 10:33:05 2018
 @author: shlomi
 """
 
+def anomalize_xr(da_ts, freq='D', time_dim=None, units=None, verbose=True):  # i.e., like deseason
+    import xarray as xr
+    if time_dim is None:
+        time_dim = list(set(da_ts.dims))[0]
+    attrs = da_ts.attrs
+    if isinstance(da_ts, xr.Dataset):
+        da_attrs = dict(zip([x for x in da_ts], [da_ts[x].attrs for x in da_ts]))
+    try:
+        name = da_ts.name
+    except AttributeError:
+        name = ''
+    if isinstance(da_ts, xr.Dataset):
+        name = [x for x in da_ts]
+    if freq == 'D':
+        if verbose:
+            print('removing daily means from {}'.format(name))
+        frq = 'daily'
+        date = groupby_date_xr(da_ts)
+        grp = date
+    elif freq == 'H':
+        if verbose:
+            print('removing hourly means from {}'.format(name))
+        frq = 'hourly'
+        grp = '{}.hour'.format(time_dim)
+    elif freq == 'MS':
+        if verbose:
+            print('removing monthly means from {}'.format(name))
+        frq = 'monthly'
+        grp = '{}.month'.format(time_dim)
+    elif freq == 'AS':
+        if verbose:
+            print('removing yearly means from {}'.format(name))
+        frq = 'yearly'
+        grp = '{}.year'.format(time_dim)
+    elif freq == 'DOY':
+        if verbose:
+            print('removing day of year means from {}'.format(name))
+        frq = 'dayofyear'
+        grp = '{}.dayofyear'.format(time_dim)
+    elif freq == 'WOY':
+        if verbose:
+            print('removing week of year means from {}'.format(name))
+        frq = 'weekofyear'
+        grp = '{}.weekofyear'.format(time_dim)
+    # calculate climatology:
+    climatology = da_ts.groupby(grp).mean()
+    climatology_std = da_ts.groupby(grp).std()
+    da_anoms = da_ts.groupby(grp) - climatology
+    if units == '%':
+        da_anoms = 100.0 * (da_anoms.groupby(grp) / climatology)
+        # da_anoms = 100.0 * (da_anoms / da_ts.mean())
+        # da_anoms = 100.0 * (da_ts.groupby(grp)/climatology - 1)
+        # da_anoms = 100.0 * (da_ts.groupby(grp)-climatology) / da_ts
+        if verbose:
+            print('Using % as units.')
+    elif units == 'std':
+        da_anoms = (da_anoms.groupby(grp) / climatology_std)
+        if verbose:
+            print('Using std as units.')
+    da_anoms = da_anoms.reset_coords(drop=True)
+    da_anoms.attrs.update(attrs)
+    da_anoms.attrs.update(action='removed {} means'.format(frq))
+    # if dataset, update attrs for each dataarray and add action='removed x means'
+    if isinstance(da_ts, xr.Dataset):
+        for x in da_ts:
+            da_anoms[x].attrs.update(da_attrs.get(x))
+            da_anoms[x].attrs.update(action='removed {} means'.format(frq))
+            if units == '%':
+                da_anoms[x].attrs.update(units='%')
+    return da_anoms
+
 
 def copy_coords_attrs(ds1, ds2, verbose=False):
     inter_coords = list(set(ds1.coords).intersection(set(ds2.coords)))
@@ -239,7 +310,7 @@ def grid_seperation_xr(lat_res=1.25, lon_res=1.25, area_equal=False,
                        clip_last_lon=True, lon_start=-180.0):
     import numpy as np
     import xarray as xr
-    # calculates the real area of earth's(normalized to 1) at each latt+lon strip 
+    # calculates the real area of earth's(normalized to 1) at each latt+lon strip
 
     def calculate_area(lat_outer, lon_outer):
         area = np.zeros((len(lat_outer) - 1, len(lon_outer) - 1))
@@ -407,6 +478,13 @@ def predict_xr(result_ds, regressors):
     # retures the same dataset but with total predicted reconstructed geo-time-series field
     result_ds = rds
     return result_ds
+
+
+def groupby_date_xr(da_ts, time_dim='time'):
+    df = da_ts[time_dim].to_dataframe()
+    df['date'] = df.index.date
+    date = df['date'].to_xarray()
+    return date
 
 
 def custom_stack_xr(da, dim_not_stacked='time'):

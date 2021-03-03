@@ -339,7 +339,7 @@ def _produce_cpt_swoosh(load_path=work_chaim, savepath=None):
 #        cold_point = cold_point.mean('lon')
 #        cold_point = cold_point.mean('lat')
 #        # cold_point = cold_point.rolling(time=3).mean()
-#        
+#
 #        # cold_point = era5.sel(level=slice(150, 50)).min(['level', 'lat',
 #        #                                                  'lon'])
 #    else:
@@ -383,6 +383,37 @@ def _produce_CDAS_QBO(savepath=None):
         qbo.to_netcdf(savepath / 'qbo_cdas_index.nc')
         print_saved_file('qbo_cdas_index.nc', savepath)
     return qbo
+
+
+def _produce_CO2(loadpath, filename='co2.txt'):
+    import requests
+    import io
+    import xarray as xr
+    import pandas as pd
+    from aux_functions_strat import save_ncfile
+    # TODO: complete this:
+    filepath = loadpath / filename
+    if filepath.is_file():
+        print('co2 index already d/l and saved!')
+        co2 = xr.open_dataset(filepath)
+    else:
+        print('Downloading CO2 index data from cpc website...')
+        url = 'https://www.esrl.noaa.gov/gmd/webdata/ccgg/trends/co2/co2_mm_mlo.txt'
+        s = requests.get(url).content
+        co2_df = pd.read_csv(io.StringIO(s.decode('utf-8')),
+                             delim_whitespace=True, comment='#')
+        co2_df.columns = ['year', 'month', 'decimal_date', 'monthly_average', 'deseasonalized', 'days', 'days_std', 'mm_uncertainty']
+        co2_df['dt'] = pd.to_datetime(co2_df['year'].astype(str) + '-' + co2_df['month'].astype(str))
+        co2_df = co2_df.set_index('dt')
+        co2_df.index.name = 'time'
+        co2 = co2_df[['monthly_average', 'mm_uncertainty']].to_xarray()
+        co2 = co2.rename(
+            {'monthly_average': 'co2', 'mm_uncertainty': 'co2_error'})
+        co2.attrs['name'] = 'CO2 index'
+        co2.attrs['source'] = url
+        co2['co2'].attrs['units'] = 'ppm'
+        save_ncfile(co2, loadpath, 'co2_index.nc')
+    return co2
 
 
 def _produce_GHG(loadpath, savepath=None):
@@ -455,6 +486,8 @@ def _produce_T500_from_era5(loadpath, savepath=None):
         print_saved_file('era5_t500_index.nc', savepath)
     return t500
 
+
+# def _produce_qbo_berlin()
 
 def _produce_eof_pcs(loadpath, npcs=2, name='qbo', source='singapore',
                      levels=(100, 10), plot=True, savepath=None):
@@ -844,7 +877,7 @@ def _download_enso_ersst(loadpath, filename='noaa_ersst_nino.nc', index=False,
 #    return solar_xr
 
 
-def _download_singapore_qbo(path=None, filename='singapore_qbo.nc'):
+def _download_singapore_qbo(path=None, filename='singapore_qbo_index.nc'):
     import requests
     import os.path
     import io
@@ -861,7 +894,7 @@ def _download_singapore_qbo(path=None, filename='singapore_qbo.nc'):
     if filepath.is_file():
         print('singapore QBO already d/l and saved!')
         # read it to data array (xarray)
-        sqbo_xr = xr.open_dataarray(path / filename)
+        sqbo_xr = xr.open_dataset(path / filename)
         # else d/l the file and first read it to df (pandas),
         # then to xarray then save as nc:
     else:
@@ -1074,11 +1107,27 @@ def _produce_moi2(loadpath=reg_path, savepath=reg_path):
     return da
 
 
-#def _produce_ncp(loadpath=reg_path):
-#    import pandas as pd
-#    df = pd.read_csv(loadpath/'ncp.txt', delim_whitespace=True)
-#    df.columns = ['year', 'month', 'ncp']
-    
+def _produce_mei_v1(loadpath=reg_path, savepath=reg_path):
+    import pandas as pd
+    df = pd.read_csv(loadpath / 'meiv1.txt',
+                     names=['YEAR', 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                     skiprows=10, delim_whitespace=True)
+    df = df.iloc[0:69]
+    df = pd.melt(df, id_vars='YEAR', var_name='month', value_name='meiv1')
+    df['month']=df['month'].astype(int)
+    df['time'] = df['YEAR'].astype(str) + '-' + df['month'].astype(str)
+    df['time'] = pd.to_datetime(df['time'])
+    df = df.set_index('time')
+    df = df.sort_index()
+    df  = df.drop(['YEAR', 'month'], axis=1)
+    df = df.astype(float)
+    da = df.to_xarray()
+    if savepath is not None:
+        filename = 'meiv1_index.nc'
+        da.to_netcdf(savepath / filename)
+        print_saved_file(filename, savepath)
+    return da
+
 
 def _produce_mei_v2(loadpath=reg_path, savepath=reg_path):
     import pandas as pd
@@ -1090,6 +1139,7 @@ def _produce_mei_v2(loadpath=reg_path, savepath=reg_path):
     df['time'] = pd.to_datetime(df['time'])
     df = df.set_index('time')
     df = df.sort_index()
+    df = df.drop(['YEAR', 'month'], axis=1)
     da = df.to_xarray()
     if savepath is not None:
         filename = 'meiv2_index.nc'
